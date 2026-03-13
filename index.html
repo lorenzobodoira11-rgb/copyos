@@ -1990,10 +1990,35 @@ function showUpgradeWall() {
   document.getElementById('upgradeWall').classList.add('open');
 }
 
-function goToMP() {
-  // En producción: redirigir a checkout de MercadoPago Subscriptions
-  alert('En producción: acá redirigís a MercadoPago Subscriptions.\n\nTe genero el código del backend cuando quieras.');
-  document.getElementById('upgradeWall').classList.remove('open');
+async function goToMP() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { alert('Necesitás iniciar sesión primero.'); return; }
+
+  const btn = document.querySelector('.uw-mp-btn');
+  btn.textContent = 'Redirigiendo...';
+  btn.disabled = true;
+
+  try {
+    const res = await fetch('/api/create-subscription', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`
+      },
+      body: JSON.stringify({ plan: 'monthly' })
+    });
+
+    const data = await res.json();
+    if (data.init_point) {
+      window.location.href = data.init_point;
+    } else {
+      throw new Error(data.message || 'Error al crear suscripción');
+    }
+  } catch (err) {
+    alert('Error: ' + err.message);
+    btn.textContent = 'Pagar con MercadoPago →';
+    btn.disabled = false;
+  }
 }
 
 // ── INIT ───────────────────────────────────────────────
