@@ -1688,14 +1688,6 @@ async function loadProfileAndEnter(user) {
   document.getElementById('user-avatar').textContent = (profile?.name || user.email)[0].toUpperCase();
   updateUsageMeter();
   showScreen('app');
-
-  if (!STATE.apiKey) {
-    const key = prompt('Para usar CopyOS necesitás tu API key de Anthropic.\n\nEncontrala en console.anthropic.com/settings/keys\n\nAPI Key:');
-    if (key?.startsWith('sk-ant')) {
-      STATE.apiKey = key;
-      localStorage.setItem('copyos_api', key);
-    }
-  }
 }
 
 async function doLogout() {
@@ -1951,23 +1943,30 @@ async function generate(tool) {
 
   try {
     const t0 = Date.now();
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+
+    // Obtener token de sesión de Supabase
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) { setStatus(pre, 'Sesión expirada, volvé a iniciar sesión', 'error'); return; }
+
+    // Llamar al proxy backend (la API key de Anthropic está en el servidor)
+    const res = await fetch('/api/generate', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': STATE.apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true'
+        'Authorization': `Bearer ${session.access_token}`
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1800,
         system: prompt.system,
-        messages: [{ role: 'user', content: prompt.user }]
+        messages: [{ role: 'user', content: prompt.user }],
+        max_tokens: 1800
       })
     });
 
-    if (!res.ok) { const err = await res.json(); throw new Error(err.error?.message || 'Error de API'); }
+    if (!res.ok) {
+      const err = await res.json();
+      if (err.error === 'limit_reached') { showUpgradeWall(); return; }
+      throw new Error(err.error?.message || err.message || 'Error de API');
+    }
 
     const data = await res.json();
     const raw = data.content[0].text;
