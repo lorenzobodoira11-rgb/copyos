@@ -1,5 +1,5 @@
 // api/webhook-mp.js
-// Recibe notificaciones de MercadoPago y actualiza el plan en Supabase
+// Recibe notificaciones de MercadoPago y activa el plan Pro en Supabase
 
 import { createClient } from '@supabase/supabase-js';
 
@@ -13,38 +13,29 @@ export default async function handler(req, res) {
 
   const { type, data } = req.body;
 
-  // Solo nos importan los eventos de suscripción
-  if (type !== 'subscription_preapproval') {
-    return res.status(200).json({ received: true });
-  }
+  // Solo nos importan pagos aprobados
+  if (type !== 'payment') return res.status(200).json({ received: true });
 
   try {
-    // Consultar el estado de la suscripción en MercadoPago
-    const mpRes = await fetch(`https://api.mercadopago.com/preapproval/${data.id}`, {
+    // Consultar el pago en MercadoPago
+    const mpRes = await fetch(`https://api.mercadopago.com/v1/payments/${data.id}`, {
       headers: { 'Authorization': `Bearer ${process.env.MP_ACCESS_TOKEN}` }
     });
-    const subscription = await mpRes.json();
+    const payment = await mpRes.json();
+
+    if (payment.status !== 'approved') return res.status(200).json({ received: true });
 
     // Extraer user_id del external_reference (formato: "user_id|plan")
-    const [userId, plan] = (subscription.external_reference || '').split('|');
+    const [userId, plan] = (payment.external_reference || '').split('|');
     if (!userId) return res.status(400).json({ error: 'external_reference inválido' });
 
-    const status = subscription.status;
+    // Activar Pro por 30 días (o 365 si es anual)
+    await sb.rpc('upgrade_to_pro', {
+      user_id: userId,
+      sub_id: String(payment.id)
+    });
 
-    if (status === 'authorized') {
-      // Pago confirmado → activar Pro
-      await sb.rpc('upgrade_to_pro', {
-        user_id: userId,
-        sub_id: subscription.id
-      });
-      console.log(`✓ Usuario ${userId} actualizado a Pro`);
-
-    } else if (status === 'cancelled' || status === 'paused') {
-      // Suscripción cancelada → volver a Free
-      await sb.rpc('downgrade_to_free', { user_id: userId });
-      console.log(`↓ Usuario ${userId} volvió a Free`);
-    }
-
+    console.log(`✓ Usuario ${userId} activado a Pro (plan: ${plan})`);
     return res.status(200).json({ received: true });
 
   } catch (err) {
